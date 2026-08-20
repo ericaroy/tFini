@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>tFini - Torn City Financial Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">▣ tFini for Torn City</p>
+          <h1>Track every Torn dollar from one financial command center.</h1>
+          <p class="subcopy">Connect a Torn API key, pull your moneylog, and review inflows, expenses, balances, and suspicious outliers without spreadsheets.</p>
+        </div>
+        <form class="sync-card" id="sync-form">
+          <label>Torn API key<input id="api-key" type="password" placeholder="Paste key or use TORN_API_KEY on server" /></label>
+          <div class="date-grid">
+            <label>From<input id="from" type="date" /></label>
+            <label>To<input id="to" type="date" /></label>
+          </div>
+          <button id="sync-button">↻ Sync transactions</button>
+          <small>🛡 API keys are sent only to this app's local proxy and are never stored in the browser.</small>
+        </form>
+      </section>
+
+      <section class="status" id="status"><strong>Demo mode.</strong> Demo data loaded. Add your Torn API key to sync live moneylog transactions.</section>
+
+      <section class="cards">
+        <article><span>Income</span><strong class="positive" id="income">$0</strong></article>
+        <article><span>Expenses</span><strong class="negative" id="expenses">$0</strong></article>
+        <article><span>Net change</span><strong id="net">$0</strong></article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header"><h2>Transactions</h2><label class="search">Search<input id="search" placeholder="Search category or description" /></label></div>
+        <div class="table" id="transactions"></div>
+      </section>
+    </main>
+    <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
