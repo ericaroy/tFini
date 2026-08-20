@@ -1,4 +1,4 @@
-# tFini
+# tFini - testing codex
 
 A Flask-powered Torn City financial web dashboard that syncs a player's `moneylog` through a local Python API proxy and summarizes income, expenses, net change, balances, and searchable transactions.
 
