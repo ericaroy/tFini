@@ -37,6 +37,17 @@
         <div class="panel-header"><h2>Transactions</h2><label class="search">Search<input id="search" placeholder="Search category or description" /></label></div>
         <div class="table" id="transactions"></div>
       </section>
+
+      <section class="panel">
+      <div class="panel-header">
+      <h2>Transactions</h2>
+        <label class="search">Search<input id="search" placeholder="Search category or description" /></label>
+      </div>
+
+      <div class="table" id="transactions"></div>
+
+      <button id="load-more" type="button" hidden>Load older transactions</button>
+    </section>
     </main>
     <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
   </body>

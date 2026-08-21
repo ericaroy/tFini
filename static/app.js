@@ -7,6 +7,7 @@ const sampleTransactions = [
 
 let transactions = [];
 let usingDemo = false;
+let nextPageUrl = null;
 
 const elements = {
   form: document.querySelector('#sync-form'),
@@ -20,6 +21,7 @@ const elements = {
   net: document.querySelector('#net'),
   table: document.querySelector('#transactions'),
   button: document.querySelector('#sync-button'),
+  loadMore: document.querySelector('#load-more'),
 };
 
 function money(value) {
@@ -183,6 +185,8 @@ async function syncTransactions(event) {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Unable to sync transactions.');
     transactions = flattenLogs(payload.logs);
+    nextPageUrl = payload.pagination?.next || null;
+    elements.loadMore.hidden = !nextPageUrl;
     usingDemo = false;
     setStatus(`Synced ${transactions.length} transactions from Torn at ${new Date(payload.fetchedAt).toLocaleString()}.`);
     render();
@@ -193,6 +197,49 @@ async function syncTransactions(event) {
     elements.button.textContent = '↻ Sync transactions';
   }
 }
+
+async function loadMoreTransactions() {
+  if (!nextPageUrl) return;
+
+  elements.loadMore.disabled = true;
+  elements.loadMore.textContent = 'Loading…';
+
+  try {
+    const params = new URLSearchParams();
+    params.set('page', nextPageUrl);
+
+    if (elements.apiKey.value) {
+      params.set('key', elements.apiKey.value);
+    }
+
+    const response = await fetch(`/api/torn/transactions?${params}`);
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error || 'Unable to load older transactions.');
+    }
+
+    const additionalTransactions = flattenLogs(payload.logs);
+    const existingIds = new Set(transactions.map((transaction) => transaction.id));
+
+    transactions = [
+      ...transactions,
+      ...additionalTransactions.filter((transaction) => !existingIds.has(transaction.id)),
+    ].sort((a, b) => b.timestamp - a.timestamp);
+
+    nextPageUrl = payload.pagination?.next || null;
+    elements.loadMore.hidden = !nextPageUrl;
+
+    render();
+  } catch (error) {
+    setStatus(error.message);
+  } finally {
+    elements.loadMore.disabled = false;
+    elements.loadMore.textContent = 'Load older transactions';
+  }
+}
+
+elements.loadMore.addEventListener('click', loadMoreTransactions);
 
 elements.form.addEventListener('submit', syncTransactions);
 elements.search.addEventListener('input', render);

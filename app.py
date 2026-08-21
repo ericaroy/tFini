@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from flask import Flask, jsonify, render_template, request
 
@@ -18,7 +19,28 @@ def sanitize_key(value):
     return str(value or "").strip()
 
 
-def build_torn_url(from_timestamp=None, to_timestamp=None):
+def build_torn_url(from_timestamp=None, to_timestamp=None, page_url=None):
+    if page_url:
+        parsed = urlparse(page_url)
+
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "api.torn.com"
+            or parsed.path != "/v2/user/log"
+        ):
+            raise ValueError("Invalid Torn pagination link.")
+
+        allowed_params = {"limit", "log", "from", "to", "nanostamp"}
+        supplied_params = parse_qs(parsed.query)
+
+        params = {
+            key: values[-1]
+            for key, values in supplied_params.items()
+            if key in allowed_params
+        }
+
+        return f"{TORN_API_BASE}?{urlencode(params)}"
+
     params = {
         "limit": 100,
         "log": "1112,1113,4201,4210",
@@ -32,8 +54,8 @@ def build_torn_url(from_timestamp=None, to_timestamp=None):
     return f"{TORN_API_BASE}?{urlencode(params)}"
 
 
-def fetch_torn_logs(api_key, from_timestamp=None, to_timestamp=None):
-    url = build_torn_url(from_timestamp, to_timestamp)
+def fetch_torn_logs(api_key, from_timestamp=None, to_timestamp=None, page_url=None):
+    url = build_torn_url(from_timestamp, to_timestamp, page_url)
     request_object = Request(
         url,
         headers={
@@ -57,26 +79,33 @@ def transactions():
         return jsonify({"error": "A Torn API key is required. Provide ?key=... or set TORN_API_KEY."}), 400
 
     try:
-        logs, api_error = fetch_torn_logs(
-            api_key,
-            request.args.get("from"),
-            request.args.get("to"),
-        )
+        payload = fetch_torn_logs(
+    api_key,
+    request.args.get("from"),
+    request.args.get("to"),
+    request.args.get("page"),
+)
     except HTTPError as error:
         return jsonify({"error": f"Torn API returned HTTP {error.code}"}), error.code
     except (TimeoutError, URLError) as error:
         return jsonify({"error": f"Unable to reach Torn API: {error}"}), 502
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
     except json.JSONDecodeError:
         return jsonify({"error": "Torn API returned an invalid JSON response."}), 502
 
-    if api_error:
-        payload, status_code = api_error
-        return jsonify(payload), status_code
+    if payload.get("error"):
+        error = payload["error"]
+        return jsonify({
+            "error": error.get("error", "Torn API error"),
+            "code": error.get("code"),
+        }), 400
 
     return jsonify({
-    "logs": logs,
-    "fetchedAt": datetime.now(timezone.utc).isoformat(),
-})
+        "logs": payload.get("log", []),
+        "pagination": payload.get("_metadata", {}).get("links", {}),
+        "fetchedAt": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 if __name__ == "__main__":
