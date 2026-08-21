@@ -5,8 +5,8 @@ const sampleTransactions = [
   { id: 'sample-4', timestamp: 1787161200, category: 'Faction', event: 'Faction vault deposit', amount: -10000000, balance: 138220000 },
 ];
 
-let transactions = [...sampleTransactions];
-let usingDemo = true;
+let transactions = [];
+let usingDemo = false;
 
 const elements = {
   form: document.querySelector('#sync-form'),
@@ -30,17 +30,96 @@ function formatDate(value) {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value * 1000));
 }
 
-function flattenMoneylog(moneylog) {
-  return Object.entries(moneylog || {})
-    .map(([id, entry]) => ({
-      id,
-      timestamp: Number(entry.timestamp || entry.time || id),
-      category: entry.category || entry.type || 'Transaction',
-      event: entry.event || entry.description || entry.detail || 'Torn money movement',
-      amount: Number(entry.amount || entry.money || entry.change || 0),
-      balance: Number(entry.balance || 0),
-    }))
-    .filter((entry) => Number.isFinite(entry.timestamp))
+function findNumber(source, keys) {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (value !== undefined && value !== null && value !== '') {
+      const number = Number(value);
+      if (Number.isFinite(number)) return number;
+    }
+  }
+  return null;
+}
+
+function normalizeItemMarketLog(entry) {
+  if (entry.details?.category !== 'Item market') return null;
+
+  const data = entry.data || {};
+  const isBuy = /buy/i.test(entry.details?.title || '');
+  const isSale = /sell|sold/i.test(entry.details?.title || '');
+  const item = data.items?.[0];
+
+  if ((!isBuy && !isSale) || !item) return null;
+
+  const grossTotal = Number(data.cost_total || 0);
+  const fee = Number(data.fee || 0);
+  const counterpartyId = isBuy ? data.seller : data.buyer;
+
+  return {
+    id: entry.id,
+    timestamp: Number(entry.timestamp),
+    category: 'Item Market',
+    event: `${isBuy ? 'Bought' : 'Sold'} ${item.qty}× Item #${item.id}`,
+    itemId: item.id,
+    quantity: Number(item.qty || 0),
+    priceEach: Number(data.cost_each || 0),
+    fee,
+    amount: isBuy ? -grossTotal : grossTotal - fee,
+    counterpartyLabel: isBuy ? 'Bought from' : 'Sold to',
+    counterparty: data.anonymous ? 'Anonymous player' : `Player #${counterpartyId}`,
+    balance: 0,
+  };
+}
+
+function normalizeAbroadPurchaseLog(entry) {
+  if (entry.details?.id !== 4201) return null;
+
+  const data = entry.data || {};
+
+  return {
+    id: entry.id,
+    timestamp: Number(entry.timestamp),
+    category: 'Abroad Purchase',
+    event: `Bought ${data.quantity || 0}× Item #${data.item || 'unknown'}`,
+    itemId: data.item,
+    quantity: Number(data.quantity || 0),
+    priceEach: Number(data.cost_each || 0),
+    amount: -Number(data.cost_total || 0),
+    counterpartyLabel: 'Purchased abroad',
+    counterparty: `Area ${data.area || 'unknown'}`,
+    balance: 0,
+  };
+}
+
+function normalizeShopSaleLog(entry) {
+  if (entry.details?.id !== 4210) return null;
+
+  const data = entry.data || {};
+  const shopName = String(data.area || 'Shop').replace(/^to\s+/i, '');
+
+  return {
+    id: entry.id,
+    timestamp: Number(entry.timestamp),
+    category: 'City Shop',
+    event: `Sold ${data.quantity || 0}× Item #${data.item || 'unknown'}`,
+    itemId: data.item,
+    quantity: Number(data.quantity || 0),
+    priceEach: Number(data.value_each || 0),
+    amount: Number(data.total_value || 0),
+    counterpartyLabel: 'Sold to',
+    counterparty: shopName,
+    balance: 0,
+  };
+}
+
+function flattenLogs(logs) {
+  return (logs || [])
+    .map((entry) =>
+      normalizeItemMarketLog(entry) ||
+      normalizeAbroadPurchaseLog(entry) ||
+      normalizeShopSaleLog(entry)
+    )
+    .filter(Boolean)
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
@@ -89,18 +168,21 @@ async function syncTransactions(event) {
   event.preventDefault();
   elements.button.disabled = true;
   elements.button.textContent = '↻ Syncing';
-  setStatus('Syncing Torn moneylog...');
+  setStatus('Syncing Torn logs...');
 
   const params = new URLSearchParams();
   if (elements.apiKey.value) params.set('key', elements.apiKey.value);
   if (elements.from.value) params.set('from', Math.floor(new Date(elements.from.value).getTime() / 1000));
-  if (elements.to.value) params.set('to', Math.floor(new Date(elements.to.value).getTime() / 1000));
+  if (elements.to.value) {
+  const endOfDay = new Date(`${elements.to.value}T23:59:59`);
+  params.set('to', Math.floor(endOfDay.getTime() / 1000));
+}
 
   try {
     const response = await fetch(`/api/torn/transactions?${params}`);
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Unable to sync transactions.');
-    transactions = flattenMoneylog(payload.moneylog);
+    transactions = flattenLogs(payload.logs);
     usingDemo = false;
     setStatus(`Synced ${transactions.length} transactions from Torn at ${new Date(payload.fetchedAt).toLocaleString()}.`);
     render();
