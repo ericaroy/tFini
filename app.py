@@ -139,10 +139,8 @@ def transactions():
     item_ids = set()
 
     item_names = fetch_all_item_names(api_key)
-    print("Cached item-name count:", len(item_names))
+  
 
-    #Print names of items found
-    print("Item names:", item_names)
     return jsonify({
         "logs": logs,
         "itemNames": item_names,

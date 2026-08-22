@@ -24,6 +24,22 @@ const ABROAD_LOCATIONS = {
 };
 
 
+const NOTES_STORAGE_KEY = 'torn-finance-transaction-notes';
+
+let transactionNotes = JSON.parse(
+  localStorage.getItem(NOTES_STORAGE_KEY) || '{}'
+);
+
+function saveTransactionNote(transactionId, note) {
+  if (note.trim()) {
+    transactionNotes[transactionId] = note.trim();
+  } else {
+    delete transactionNotes[transactionId];
+  }
+
+  localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(transactionNotes));
+}
+
 function displayItem(itemId, names = itemNames) {
   return names?.[String(itemId)] ?? `Item #${itemId || 'unknown'}`;
 }
@@ -102,6 +118,12 @@ function normalizeAbroadPurchaseLog(entry,itemNames) {
 
   const data = entry.data || {};
   const locationName = ABROAD_LOCATIONS[Number(data.area)] ?? `Area #${data.area || 'unknown'}`;
+  console.log('Abroad purchase location:', {
+  locationId: data.area,
+  locationName,
+  itemId: data.item,
+  rawData: data,
+});
 
   return {
     id: entry.id,
@@ -116,6 +138,7 @@ function normalizeAbroadPurchaseLog(entry,itemNames) {
     counterparty: locationName,
     balance: 0,
   };
+  console.log(data.area);
 }
 
 function normalizeShopSaleLog(entry,itemNames) {
@@ -199,7 +222,25 @@ function render() {
     ${tx.counterparty ? ` · ${escapeHtml(tx.counterpartyLabel)}: ${escapeHtml(tx.counterparty)}` : ''}
   </span>
 </div>
-      <div class="amount"><strong class="${tx.amount >= 0 ? 'positive' : 'negative'}">${money(tx.amount)}</strong>${tx.balance ? `<span>Balance ${money(tx.balance)}</span>` : ''}</div>
+    <div class="amount"><strong class="${tx.amount >= 0 ? 'positive' : 'negative'}">${money(tx.amount)}</strong>${tx.balance ? `<span>Balance ${money(tx.balance)}</span>` : ''}</div>
+    <div class="transaction-note-wrap">
+  <button
+    type="button"
+    class="note-toggle"
+    aria-expanded="false"
+  >
+    ${transactionNotes[tx.id] ? 'Edit note' : 'Add note'}
+  </button>
+
+  <input
+    class="transaction-note"
+    data-transaction-id="${escapeHtml(tx.id)}"
+    value="${escapeHtml(transactionNotes[tx.id] || '')}"
+    placeholder="Add a note"
+    aria-label="Note for ${escapeHtml(tx.event)}"
+    hidden
+  >
+</div>
     </div>`).join('') : '<p class="empty">No matching transactions.</p>';
 }
 
@@ -233,9 +274,9 @@ async function syncTransactions(event) {
     itemNames = { ...itemNames, ...(payload.itemNames || {}) };
     console.log('Full API response:', payload);
     console.log('Item-name lookup:', payload.itemNames);
-    console.log('Item 1348:', payload.itemNames?.['1348']);
+    //console.log('Item 1348:', payload.itemNames?.['1348']);
     console.log('Logs returned:', payload.logs.length);
-    console.log('Transactions displayed:', flattenLogs(payload.logs).length);
+    //console.log('Transactions displayed:', flattenLogs(payload.logs).length);
     if (!response.ok) throw new Error(payload.error || 'Unable to sync transactions.');
     transactions = flattenLogs(payload.logs, payload.itemNames);
     nextPageUrl = payload.pagination?.next || null;
@@ -298,4 +339,24 @@ elements.loadMore.addEventListener('click', loadMoreTransactions);
 
 elements.form.addEventListener('submit', syncTransactions);
 elements.search.addEventListener('input', render);
+elements.table.addEventListener('change', (event) => {
+  const input = event.target.closest('.transaction-note');
+  if (!input) return;
+
+  saveTransactionNote(input.dataset.transactionId, input.value);
+});
+elements.table.addEventListener('click', (event) => {
+  const button = event.target.closest('.note-toggle');
+  if (!button) return;
+
+  const wrapper = button.closest('.transaction-note-wrap');
+  const input = wrapper.querySelector('.transaction-note');
+
+  input.hidden = !input.hidden;
+  button.setAttribute('aria-expanded', String(!input.hidden));
+
+  if (!input.hidden) {
+    input.focus();
+  }
+});
 render();
