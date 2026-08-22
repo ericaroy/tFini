@@ -8,6 +8,26 @@ const sampleTransactions = [
 let transactions = [];
 let usingDemo = false;
 let nextPageUrl = null;
+let itemNames = {};
+const ABROAD_LOCATIONS = {
+  2: 'Mexico',
+  3: 'Cayman Islands',
+  4: 'Canada',
+  5: 'Hawaii',
+  6: 'United Kingdom',
+  7: 'Argentina',
+  8: 'Switzerland',
+  9: 'Japan',
+  10: 'China',
+  11: 'United Arab Emirates',
+  12: 'South Africa',
+};
+
+
+function displayItem(itemId, names = itemNames) {
+  return names?.[String(itemId)] ?? `Item #${itemId || 'unknown'}`;
+}
+
 
 const elements = {
   form: document.querySelector('#sync-form'),
@@ -32,6 +52,8 @@ function formatDate(value) {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value * 1000));
 }
 
+
+
 function findNumber(source, keys) {
   for (const key of keys) {
     const value = source?.[key];
@@ -43,15 +65,17 @@ function findNumber(source, keys) {
   return null;
 }
 
-function normalizeItemMarketLog(entry) {
-  if (entry.details?.category !== 'Item market') return null;
-
-  const data = entry.data || {};
-  const isBuy = /buy/i.test(entry.details?.title || '');
-  const isSale = /sell|sold/i.test(entry.details?.title || '');
+function normalizeItemMarketLog(entry,itemNames) {
+    const data = entry.data || {};
   const item = data.items?.[0];
 
-  if ((!isBuy && !isSale) || !item) return null;
+  // Item-market logs contain an items array.
+  if (!item) return null;
+
+  const isBuy = /buy/i.test(entry.details?.title || '');
+  const isSale = /sell|sold/i.test(entry.details?.title || '');
+
+  if (!isBuy && !isSale) return null;
 
   const grossTotal = Number(data.cost_total || 0);
   const fee = Number(data.fee || 0);
@@ -61,7 +85,7 @@ function normalizeItemMarketLog(entry) {
     id: entry.id,
     timestamp: Number(entry.timestamp),
     category: 'Item Market',
-    event: `${isBuy ? 'Bought' : 'Sold'} ${item.qty}× Item #${item.id}`,
+    event: `${isBuy ? 'Bought' : 'Sold'} ${item.qty}× ${displayItem(item.id, itemNames)}`,
     itemId: item.id,
     quantity: Number(item.qty || 0),
     priceEach: Number(data.cost_each || 0),
@@ -73,27 +97,28 @@ function normalizeItemMarketLog(entry) {
   };
 }
 
-function normalizeAbroadPurchaseLog(entry) {
+function normalizeAbroadPurchaseLog(entry,itemNames) {
   if (entry.details?.id !== 4201) return null;
 
   const data = entry.data || {};
+  const locationName = ABROAD_LOCATIONS[Number(data.area)] ?? `Area #${data.area || 'unknown'}`;
 
   return {
     id: entry.id,
     timestamp: Number(entry.timestamp),
     category: 'Abroad Purchase',
-    event: `Bought ${data.quantity || 0}× Item #${data.item || 'unknown'}`,
+    event: `Bought ${data.quantity || 0}× ${displayItem(data.item, itemNames)}`,
     itemId: data.item,
     quantity: Number(data.quantity || 0),
     priceEach: Number(data.cost_each || 0),
     amount: -Number(data.cost_total || 0),
-    counterpartyLabel: 'Purchased abroad',
-    counterparty: `Area ${data.area || 'unknown'}`,
+    counterpartyLabel: 'Bought in',
+    counterparty: locationName,
     balance: 0,
   };
 }
 
-function normalizeShopSaleLog(entry) {
+function normalizeShopSaleLog(entry,itemNames) {
   if (entry.details?.id !== 4210) return null;
 
   const data = entry.data || {};
@@ -103,7 +128,7 @@ function normalizeShopSaleLog(entry) {
     id: entry.id,
     timestamp: Number(entry.timestamp),
     category: 'City Shop',
-    event: `Sold ${data.quantity || 0}× Item #${data.item || 'unknown'}`,
+    event: `Sold ${data.quantity || 0}× ${displayItem(data.item, itemNames)}`,
     itemId: data.item,
     quantity: Number(data.quantity || 0),
     priceEach: Number(data.value_each || 0),
@@ -114,12 +139,12 @@ function normalizeShopSaleLog(entry) {
   };
 }
 
-function flattenLogs(logs) {
+function flattenLogs(logs, names = itemNames) {
   return (logs || [])
     .map((entry) =>
-      normalizeItemMarketLog(entry) ||
-      normalizeAbroadPurchaseLog(entry) ||
-      normalizeShopSaleLog(entry)
+      normalizeItemMarketLog(entry, names) ||
+      normalizeAbroadPurchaseLog(entry, names) ||
+      normalizeShopSaleLog(entry, names)
     )
     .filter(Boolean)
     .sort((a, b) => b.timestamp - a.timestamp);
@@ -132,6 +157,21 @@ function escapeHtml(value) {
 function filteredTransactions() {
   const needle = elements.search.value.toLowerCase();
   return transactions.filter((tx) => `${tx.category} ${tx.event}`.toLowerCase().includes(needle));
+}
+
+function unitPrice(transaction) {
+  const listedPrice = Number(transaction.priceEach);
+
+  if (Number.isFinite(listedPrice) && listedPrice > 0) {
+    return listedPrice;
+  }
+
+  const quantity = Number(transaction.quantity);
+  if (quantity > 0) {
+    return Math.abs(Number(transaction.amount) || 0) / quantity;
+  }
+
+  return null;
 }
 
 function render() {
@@ -151,7 +191,14 @@ function render() {
   elements.table.innerHTML = rows.length ? rows.map((tx) => `
     <div class="row">
       <div class="icon ${tx.amount >= 0 ? 'in' : 'out'}">${tx.amount >= 0 ? '↙' : '↗'}</div>
-      <div><strong>${escapeHtml(tx.event)}</strong><span>${escapeHtml(tx.category)} · ${formatDate(tx.timestamp)}</span></div>
+      <div>
+  <strong>${escapeHtml(tx.event)}</strong>
+  <span>
+    ${escapeHtml(tx.category)} · ${formatDate(tx.timestamp)}
+    ${unitPrice(tx) !== null ? ` · ${money(unitPrice(tx))} each` : ''}
+    ${tx.counterparty ? ` · ${escapeHtml(tx.counterpartyLabel)}: ${escapeHtml(tx.counterparty)}` : ''}
+  </span>
+</div>
       <div class="amount"><strong class="${tx.amount >= 0 ? 'positive' : 'negative'}">${money(tx.amount)}</strong>${tx.balance ? `<span>Balance ${money(tx.balance)}</span>` : ''}</div>
     </div>`).join('') : '<p class="empty">No matching transactions.</p>';
 }
@@ -183,8 +230,14 @@ async function syncTransactions(event) {
   try {
     const response = await fetch(`/api/torn/transactions?${params}`);
     const payload = await response.json();
+    itemNames = { ...itemNames, ...(payload.itemNames || {}) };
+    console.log('Full API response:', payload);
+    console.log('Item-name lookup:', payload.itemNames);
+    console.log('Item 1348:', payload.itemNames?.['1348']);
+    console.log('Logs returned:', payload.logs.length);
+    console.log('Transactions displayed:', flattenLogs(payload.logs).length);
     if (!response.ok) throw new Error(payload.error || 'Unable to sync transactions.');
-    transactions = flattenLogs(payload.logs);
+    transactions = flattenLogs(payload.logs, payload.itemNames);
     nextPageUrl = payload.pagination?.next || null;
     elements.loadMore.hidden = !nextPageUrl;
     usingDemo = false;
@@ -215,11 +268,13 @@ async function loadMoreTransactions() {
     const response = await fetch(`/api/torn/transactions?${params}`);
     const payload = await response.json();
 
+    itemNames = { ...itemNames, ...(payload.itemNames || {}) };
+
     if (!response.ok) {
       throw new Error(payload.error || 'Unable to load older transactions.');
     }
 
-    const additionalTransactions = flattenLogs(payload.logs);
+    const additionalTransactions = flattenLogs(payload.logs, payload.itemNames);
     const existingIds = new Set(transactions.map((transaction) => transaction.id));
 
     transactions = [
